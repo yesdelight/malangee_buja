@@ -1,0 +1,19 @@
+{
+  "name": "malangee-buja",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "build": "vite build",
+    "build:pages": "GITHUB_PAGES=true vite build",
+    "preview": "vite preview --host 0.0.0.0"
+  },
+  "dependencies": {
+    "@huggingface/transformers": "^4.3.0",
+    "three": "^0.186.0"
+  },
+  "devDependencies": {
+    "vite": "^8.3.0"
+  }
+}
