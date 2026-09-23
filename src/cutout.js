@@ -15,6 +15,10 @@ let segmenterPromise;
 let transformersPromise;
 let heicConverterPromise;
 const loadHeicConverter = () => import('heic2any');
+const IS_IOS_WEBKIT = /iPhone|iPad|iPod/i.test(navigator.userAgent)
+  || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const MAX_SOURCE_SIDE = IS_IOS_WEBKIT ? 1536 : 2048;
+const MAX_MODEL_SIDE = IS_IOS_WEBKIT ? 1024 : 1280;
 
 function loadTransformers() {
   transformersPromise ??= import('@huggingface/transformers');
@@ -24,7 +28,9 @@ function loadTransformers() {
 async function getSegmenter(onProgress, localFilesOnly = false) {
   segmenterPromise ??= (async () => {
     const { pipeline } = await loadTransformers();
-    if (navigator.gpu) {
+    // WebGPU on iOS Safari can exhaust the WebContent process while loading DETR.
+    // Keep iPhone/iPad on the smaller, predictable WASM path.
+    if (navigator.gpu && !IS_IOS_WEBKIT) {
       try {
         return await pipeline('image-segmentation', MODEL, { device: 'webgpu', dtype: 'q8', local_files_only: localFilesOnly, progress_callback: onProgress });
       } catch (error) {
@@ -116,7 +122,7 @@ async function readPhoto(file, RawImage) {
       throw bitmapError;
     }
   }
-  const scale = Math.min(1, 2048 / Math.max(source.width, source.height));
+  const scale = Math.min(1, MAX_SOURCE_SIDE / Math.max(source.width, source.height));
   const canvas = document.createElement('canvas');
   canvas.width = Math.max(1, Math.round(source.width * scale));
   canvas.height = Math.max(1, Math.round(source.height * scale));
@@ -156,8 +162,8 @@ export async function findCutouts(file, onProgress = () => {}) {
   const { RawImage } = await loadTransformers();
   const original = await readPhoto(file, RawImage);
   const longestSide = Math.max(original.width, original.height);
-  const image = longestSide > 1280
-    ? await original.resize(Math.round(original.width * 1280 / longestSide), Math.round(original.height * 1280 / longestSide))
+  const image = longestSide > MAX_MODEL_SIDE
+    ? await original.resize(Math.round(original.width * MAX_MODEL_SIDE / longestSide), Math.round(original.height * MAX_MODEL_SIDE / longestSide))
     : original;
   const model = await getSegmenter(onProgress);
   let ranked = rankSegments(await model(image, { threshold: 0.32, mask_threshold: 0.32, overlap_mask_area_threshold: 0.9 }));
