@@ -64,34 +64,69 @@ export async function normalizePhoto(file) {
     isHeic = header.includes('ftyp') && /hei[ cxs]|hev[ cx]|mif1|msf1/i.test(header);
   }
   if (!isHeic) return file;
-  heicConverterPromise ??= loadHeicConverter().then((module) => module.default || module);
-  const convert = await heicConverterPromise;
-  let converted;
   try {
-    converted = await convert({ blob: file, toType: 'image/jpeg', quality: 0.92 });
+    const bitmap = await createImageBitmap(file);
+    bitmap.close();
+    return file;
+  } catch {
+    // Some mobile browsers decode HEIC through HTMLImageElement but not ImageBitmap.
+    const objectUrl = URL.createObjectURL(file);
+    const image = new Image();
+    image.src = objectUrl;
+    try {
+      await image.decode();
+      return file;
+    } catch {
+      // Use the local converter only when neither native decoder can open HEIC.
+    } finally {
+      URL.revokeObjectURL(objectUrl);
+    }
+  }
+  try {
+    heicConverterPromise ??= loadHeicConverter().then((module) => module.default || module);
+    const convert = await heicConverterPromise;
+    const converted = await convert({ blob: file, toType: 'image/jpeg', quality: 0.92 });
+    const jpeg = Array.isArray(converted) ? converted[0] : converted;
+    if (!(jpeg instanceof Blob) || !jpeg.size) throw new Error('Empty conversion result');
+    return new File([jpeg], name.replace(/\.(heic|heif)$/i, '.jpg') || 'photo.jpg', { type: 'image/jpeg', lastModified: file.lastModified });
   } catch (error) {
+    heicConverterPromise = undefined;
     const conversionError = new Error('HEIC_CONVERSION_FAILED');
     conversionError.cause = error;
     throw conversionError;
   }
-  const jpeg = Array.isArray(converted) ? converted[0] : converted;
-  if (!(jpeg instanceof Blob) || !jpeg.size) throw new Error('HEIC_CONVERSION_FAILED');
-  return new File([jpeg], name.replace(/\.(heic|heif)$/i, '.jpg') || 'photo.jpg', { type: 'image/jpeg', lastModified: file.lastModified });
 }
 
 async function readPhoto(file, RawImage) {
-  const bitmap = await createImageBitmap(file);
-  const scale = Math.min(1, 2048 / Math.max(bitmap.width, bitmap.height));
+  let source;
+  let releaseSource = () => {};
+  try {
+    source = await createImageBitmap(file);
+    releaseSource = () => source.close();
+  } catch (bitmapError) {
+    const objectUrl = URL.createObjectURL(file);
+    const image = new Image();
+    image.src = objectUrl;
+    try {
+      await image.decode();
+      source = image;
+      releaseSource = () => URL.revokeObjectURL(objectUrl);
+    } catch {
+      URL.revokeObjectURL(objectUrl);
+      throw bitmapError;
+    }
+  }
+  const scale = Math.min(1, 2048 / Math.max(source.width, source.height));
   const canvas = document.createElement('canvas');
-  canvas.width = Math.max(1, Math.round(bitmap.width * scale));
-  canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+  canvas.width = Math.max(1, Math.round(source.width * scale));
+  canvas.height = Math.max(1, Math.round(source.height * scale));
   const context = canvas.getContext('2d', { willReadFrequently: true });
   if (!context) {
-    bitmap.close();
+    releaseSource();
     throw new Error('Canvas is unavailable');
   }
-  context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-  bitmap.close();
+  context.drawImage(source, 0, 0, canvas.width, canvas.height);
+  releaseSource();
   return RawImage.fromCanvas(canvas);
 }
 

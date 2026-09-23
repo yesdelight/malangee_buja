@@ -14,6 +14,7 @@ const emptyState = $('#empty-state');
 const dock = $('#object-dock');
 const statusPill = $('#status-pill');
 const aiSheet = $('#ai-sheet');
+const photoErrorSheet = $('#photo-error-sheet');
 const presets = getPresets();
 let records = new Map();
 let activeCandidates = [];
@@ -40,6 +41,18 @@ function toast(message, duration = 2200, variant = '') {
   element.classList.add('visible');
   clearTimeout(element.hideTimer);
   element.hideTimer = setTimeout(() => element.classList.remove('visible'), duration);
+}
+
+function openPhotoError(title, description) {
+  $('#photo-error-title').textContent = title;
+  $('#photo-error-description').textContent = description;
+  photoErrorSheet.hidden = false;
+  requestAnimationFrame(() => photoErrorSheet.classList.add('open'));
+}
+
+function closePhotoError() {
+  photoErrorSheet.classList.remove('open');
+  setTimeout(() => { photoErrorSheet.hidden = true; }, 220);
 }
 
 function setStatus(message, busy = false) {
@@ -237,15 +250,14 @@ async function processNextFile() {
   } catch (error) {
     console.error('Foreground extraction failed', error);
     setStatus('');
-    const conversionFailed = error.message === 'HEIC_CONVERSION_FAILED' || /heic2any|HEIC|HEIF/i.test(error.message || '') && /decode|convert|process/i.test(error.message || '');
-    const unsupportedHeic = /\.(heic|heif)$/i.test(file.name) && readablePhoto === file && conversionFailed;
-    if (!unsupportedHeic) openCandidates([{ label: '원본 사진', blob: readablePhoto, fallback: true }], file.name);
-    const message = unsupportedHeic
-      ? 'HEIC 사진을 읽지 못했어. JPEG 사진을 골라줘.'
-      : error.message === '사진에서 분리할 대상을 찾지 못했어.'
-        ? '사진에서 대상을 찾지 못했어.'
-        : '사진 분리 중 문제가 생겼어.';
-    toast(message, 2800, 'error');
+    const unsupportedHeic = /\.(heic|heif)$/i.test(file.name) && readablePhoto === file && error.message === 'HEIC_CONVERSION_FAILED';
+    if (unsupportedHeic) {
+      openPhotoError('HEIC 사진을 읽지 못했어.', '이 브라우저에서 이 사진을 열 수 없어. JPEG 사진이나 PNG 사진을 골라줘.');
+    } else if (error.message === '사진에서 분리할 대상을 찾지 못했어.') {
+      openCandidates([{ label: '원본 사진', blob: readablePhoto, fallback: true }], file.name);
+    } else {
+      openPhotoError('사진 처리에 실패했어.', '연결이나 사진 파일을 확인한 뒤 다시 시도해줘.');
+    }
   }
 }
 
@@ -386,6 +398,8 @@ $('#add-button').addEventListener('click', () => openPicker());
 emptyState.addEventListener('click', () => openPicker());
 input.addEventListener('change', () => {
   pendingFiles = [...input.files];
+  // Clearing immediately lets iOS Safari fire change again for the same photo.
+  input.value = '';
   input.removeAttribute('capture');
   if (pendingFiles.length) processNextFile();
 });
@@ -403,10 +417,12 @@ $('#share-button').addEventListener('click', sharePlayground);
 $('#menu-button').addEventListener('click', () => toast('말랑이를 누르고, 잡아당기고, 두 손가락으로 늘려봐.', 3200));
 sheet.addEventListener('click', (event) => { if (event.target.closest('[data-close-sheet]')) closeSheet(); });
 aiSheet.addEventListener('click', (event) => { if (event.target.closest('[data-close-ai]')) closeAiSheet(); });
+photoErrorSheet.addEventListener('click', (event) => { if (event.target.closest('[data-close-photo-error]')) closePhotoError(); });
+$('#choose-another-photo').addEventListener('click', () => { closePhotoError(); setTimeout(() => openPicker(), 230); });
 $('#ai-download-data').addEventListener('click', () => downloadAiModel('cellular'));
 $('#ai-download-wifi').addEventListener('click', () => downloadAiModel('wifi'));
 $('#ai-later').addEventListener('click', closeAiSheet);
-window.addEventListener('keydown', (event) => { if (event.key === 'Escape' && !sheet.hidden) closeSheet(); if (event.key === 'Escape' && !aiSheet.hidden) closeAiSheet(); });
+window.addEventListener('keydown', (event) => { if (event.key === 'Escape' && !sheet.hidden) closeSheet(); if (event.key === 'Escape' && !aiSheet.hidden) closeAiSheet(); if (event.key === 'Escape' && !photoErrorSheet.hidden) closePhotoError(); });
 window.addEventListener('beforeunload', () => { saving.catch(() => {}); });
 
 restore().then(() => {
