@@ -16,7 +16,7 @@ npm run build
 npm run preview
 ```
 
-The static production bundle is written to `dist/` and can be hosted by any static site host. Use HTTPS for camera access, install prompts, and device APIs.
+The static production bundle is written to `dist/` and can be hosted by any static site host. `npm run build:pages` prepares the repository-name base path for GitHub Pages. After merging to `main`, enable **Settings → Pages → Build and deployment → GitHub Actions**; the included workflow publishes the app on pushes to `main`. Use HTTPS for camera access, install prompts, and device APIs.
 
 ## MVP behavior
 
