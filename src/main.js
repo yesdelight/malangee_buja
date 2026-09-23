@@ -1,5 +1,5 @@
 import { SquishyScene } from './scene.js';
-import { findCutouts, prepareCutoutModel } from './cutout.js';
+import { findCutouts, normalizePhoto, prepareCutoutModel } from './cutout.js';
 import { toyStore } from './storage.js';
 import { getPresets, isSoundEnabled, toggleSound } from './feel.js';
 import './style.css';
@@ -33,9 +33,10 @@ const appScene = new SquishyScene(canvas, {
   onChange: (item, quiet = false) => persistItem(item, quiet),
 });
 
-function toast(message, duration = 2200) {
+function toast(message, duration = 2200, variant = '') {
   const element = $('#toast');
   element.textContent = message;
+  element.classList.toggle('toast-error', variant === 'error');
   element.classList.add('visible');
   clearTimeout(element.hideTimer);
   element.hideTimer = setTimeout(() => element.classList.remove('visible'), duration);
@@ -131,19 +132,22 @@ function makeCandidateRow(candidate, index) {
 
 function updateSheetAction() {
   const action = $('#add-selected');
-  if (action) action.textContent = selectedCandidates.size ? `${selectedCandidates.size}개 말랑하게 만들기` : '대상을 골라줘';
+  const isOriginal = activeCandidates.some((candidate) => candidate.fallback);
+  if (action) action.textContent = isOriginal
+    ? selectedCandidates.size ? '배경 그대로 추가' : '원본 사진을 골라줘'
+    : selectedCandidates.size ? `${selectedCandidates.size}개 말랑하게 만들기` : '대상을 골라줘';
   if (action) action.disabled = selectedCandidates.size === 0;
 }
 
 function openCandidates(candidates, filename) {
   activeCandidates.forEach((candidate) => candidate.previewUrl && URL.revokeObjectURL(candidate.previewUrl));
   activeCandidates = candidates;
-  selectedCandidates = new Set(candidates.length ? [0] : []);
+  selectedCandidates = new Set(candidates.length && !candidates[0]?.fallback ? [0] : []);
   currentFileName = filename;
   $('#sheet-eyebrow').textContent = candidates[0]?.fallback ? '분리 실패' : '대상 선택';
   $('#sheet-title').textContent = candidates[0]?.fallback ? '원본 사진으로 추가할까?' : candidates.length > 1 ? '어떤 걸 말랑하게 할까?' : '이거 말랑하게 할까?';
   $('#sheet-description').textContent = candidates[0]?.fallback
-    ? '사진에서 대상을 찾지 못했어. 원본 그대로 말랑이로 추가하거나 다른 사진을 골라봐.'
+    ? '누끼를 따지 못했어. 배경이 있는 원본 그대로 추가할 수 있어.'
     : '분리한 대상만 골라서 놀이터에 둘 수 있어.';
   list.replaceChildren();
   candidates.forEach((candidate, index) => list.append(makeCandidateRow(candidate, index)));
@@ -221,19 +225,27 @@ async function processNextFile() {
     return;
   }
   setStatus('사진을 보고 있어…', true);
+  let readablePhoto = file;
   try {
-    const candidates = await findCutouts(file, (progress) => {
-      if (progress?.status === 'progress') setStatus(`오리는 중${progress.progress ? ` ${Math.round(progress.progress)}%` : '…'}`, true);
+    readablePhoto = await normalizePhoto(file);
+    const candidates = await findCutouts(readablePhoto, (progress) => {
+      if (progress?.status === 'progress') setStatus(`사진을 살펴보는 중${progress.progress ? ` ${Math.round(progress.progress)}%` : '…'}`, true);
     });
     if (!candidates.length) throw new Error('사진에서 분리할 대상을 찾지 못했어.');
     setStatus('대상 분리 완료');
     openCandidates(candidates, file.name);
   } catch (error) {
     console.error('Foreground extraction failed', error);
-    setStatus('자동 분리에 실패했어');
-    $('#sheet-eyebrow').textContent = '분리 실패';
-    openCandidates([{ label: '원본 사진', blob: file, fallback: true }], file.name);
-    toast('다른 사진으로 다시 해도 돼.', 3600);
+    setStatus('');
+    const conversionFailed = error.message === 'HEIC_CONVERSION_FAILED' || /heic2any|HEIC|HEIF/i.test(error.message || '') && /decode|convert|process/i.test(error.message || '');
+    const unsupportedHeic = /\.(heic|heif)$/i.test(file.name) && readablePhoto === file && conversionFailed;
+    if (!unsupportedHeic) openCandidates([{ label: '원본 사진', blob: readablePhoto, fallback: true }], file.name);
+    const message = unsupportedHeic
+      ? 'HEIC 사진을 읽지 못했어. JPEG 사진을 골라줘.'
+      : error.message === '사진에서 분리할 대상을 찾지 못했어.'
+        ? '사진에서 대상을 찾지 못했어.'
+        : '사진 분리 중 문제가 생겼어.';
+    toast(message, 2800, 'error');
   }
 }
 
@@ -241,8 +253,8 @@ function openAiSheet() {
   if (aiBusy) return;
   confirmedWifiDownload = false;
   localStorage.setItem('malangee-ai-onboarding-seen', 'yes');
-  $('#ai-title').textContent = '사진 오리는 준비를 할게.';
-  $('#ai-description').textContent = '사진은 서버로 보내지 않고 이 기기에서 오려. 처음 한 번 준비 파일을 받아야 해. 모바일 데이터로 받으면 요금제에 따라 데이터 요금이 들 수 있어.';
+  $('#ai-title').textContent = '사진 속 대상을 찾아볼게.';
+  $('#ai-description').textContent = '사진은 서버로 보내지 않고 이 기기에서 처리해. 처음 한 번 준비 파일을 받아야 해. 모바일 데이터로 받으면 요금제에 따라 데이터 요금이 들 수 있어.';
   $('#ai-progress').hidden = true;
   $('#ai-download-data').hidden = false;
   $('#ai-download-wifi').hidden = false;

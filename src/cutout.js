@@ -3,10 +3,18 @@ const BACKGROUND_LABELS = new Set([
   'wall', 'floor', 'ceiling', 'sky', 'road', 'grass', 'building', 'pavement', 'ground',
   'earth', 'rug', 'field', 'mountain', 'sea', 'water', 'river', 'sand', 'land', 'house',
   'bridge', 'streetlight', 'street lamp', 'sidewalk', 'path', 'step', 'staircase', 'stairway',
+  'banner', 'blanket', 'cardboard', 'counter', 'curtain', 'door-stuff', 'floor-wood',
+  'gravel', 'mirror-stuff', 'net', 'platform', 'playingfield', 'railroad', 'roof', 'shelf',
+  'snow', 'tent', 'towel', 'wall-brick', 'wall-concrete', 'wall-other', 'wall-panel',
+  'wall-stone', 'wall-tile', 'wall-wood', 'water-other', 'window-blind', 'window-other',
+  'tree-merged', 'fence-merged', 'ceiling-merged', 'sky-other-merged', 'cabinet-merged',
+  'floor-other-merged', 'wall-other-merged', 'rug-merged', 'desk-stuff', 'door-merged',
 ]);
 
 let segmenterPromise;
 let transformersPromise;
+let heicConverterPromise;
+const loadHeicConverter = () => import('heic2any');
 
 function loadTransformers() {
   transformersPromise ??= import('@huggingface/transformers');
@@ -47,6 +55,30 @@ async function maskedBlob(image, mask) {
   });
 }
 
+export async function normalizePhoto(file) {
+  const name = String(file.name || '').toLowerCase();
+  const type = String(file.type || '').toLowerCase();
+  let isHeic = /\.(heic|heif)$/.test(name) || type.includes('heic') || type.includes('heif');
+  if (!isHeic) {
+    const header = new TextDecoder().decode(await file.slice(0, 32).arrayBuffer());
+    isHeic = header.includes('ftyp') && /hei[ cxs]|hev[ cx]|mif1|msf1/i.test(header);
+  }
+  if (!isHeic) return file;
+  heicConverterPromise ??= loadHeicConverter().then((module) => module.default || module);
+  const convert = await heicConverterPromise;
+  let converted;
+  try {
+    converted = await convert({ blob: file, toType: 'image/jpeg', quality: 0.92 });
+  } catch (error) {
+    const conversionError = new Error('HEIC_CONVERSION_FAILED');
+    conversionError.cause = error;
+    throw conversionError;
+  }
+  const jpeg = Array.isArray(converted) ? converted[0] : converted;
+  if (!(jpeg instanceof Blob) || !jpeg.size) throw new Error('HEIC_CONVERSION_FAILED');
+  return new File([jpeg], name.replace(/\.(heic|heif)$/i, '.jpg') || 'photo.jpg', { type: 'image/jpeg', lastModified: file.lastModified });
+}
+
 async function readPhoto(file, RawImage) {
   const bitmap = await createImageBitmap(file);
   const scale = Math.min(1, 2048 / Math.max(bitmap.width, bitmap.height));
@@ -78,10 +110,10 @@ function rankSegments(output, includeBackground = false) {
     }
     const coverage = visiblePixels / (mask.width * mask.height);
     // Keep small and unusual subjects. Only near-full-frame masks are likely to be backdrop.
-    if (coverage < 0.002 || coverage > 0.985) continue;
+    if (coverage < 0.001 || coverage > 0.995) continue;
     ranked.push({ label: segment.label || '대상', score: segment.score ?? 0, coverage, mask, isBackground });
   }
-  ranked.sort((a, b) => Number(a.isBackground) - Number(b.isBackground) || b.coverage - a.coverage);
+  ranked.sort((a, b) => Number(a.isBackground) - Number(b.isBackground) || b.score - a.score || b.coverage - a.coverage);
   return ranked;
 }
 
@@ -89,8 +121,8 @@ export async function findCutouts(file, onProgress = () => {}) {
   const { RawImage } = await loadTransformers();
   const original = await readPhoto(file, RawImage);
   const longestSide = Math.max(original.width, original.height);
-  const image = longestSide > 960
-    ? await original.resize(Math.round(original.width * 960 / longestSide), Math.round(original.height * 960 / longestSide))
+  const image = longestSide > 1280
+    ? await original.resize(Math.round(original.width * 1280 / longestSide), Math.round(original.height * 1280 / longestSide))
     : original;
   const model = await getSegmenter(onProgress);
   let ranked = rankSegments(await model(image, { threshold: 0.32, mask_threshold: 0.32, overlap_mask_area_threshold: 0.9 }));
