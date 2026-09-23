@@ -106,3 +106,7 @@ export async function findCutouts(file, onProgress = () => {}) {
   // Keep a short, useful choice set and let users choose the main object.
   return candidates.slice(0, 8);
 }
+
+export async function prepareCutoutModel(onProgress = () => {}) {
+  await getSegmenter(onProgress);
+}

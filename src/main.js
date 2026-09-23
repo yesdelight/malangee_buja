@@ -1,5 +1,5 @@
 import { SquishyScene } from './scene.js';
-import { findCutouts } from './cutout.js';
+import { findCutouts, prepareCutoutModel } from './cutout.js';
 import { toyStore } from './storage.js';
 import { getPresets, isSoundEnabled, toggleSound } from './feel.js';
 import './style.css';
@@ -13,6 +13,7 @@ const countLabel = $('#count-label');
 const emptyState = $('#empty-state');
 const dock = $('#object-dock');
 const statusPill = $('#status-pill');
+const aiSheet = $('#ai-sheet');
 const presets = getPresets();
 let records = new Map();
 let activeCandidates = [];
@@ -21,6 +22,8 @@ let pendingFiles = [];
 let currentFileName = '';
 let statusTimer;
 let saving = Promise.resolve();
+let aiBusy = false;
+let aiReady = false;
 
 const appScene = new SquishyScene(canvas, {
   onSelect: updateSelection,
@@ -134,9 +137,10 @@ function openCandidates(candidates, filename) {
   activeCandidates = candidates;
   selectedCandidates = new Set(candidates.length ? [0] : []);
   currentFileName = filename;
-  $('#sheet-title').textContent = candidates.length > 1 ? '어떤 걸 말랑하게 할까?' : '이거 말랑하게 할까?';
+  $('#sheet-eyebrow').textContent = candidates[0]?.fallback ? '분리 실패' : '대상 선택';
+  $('#sheet-title').textContent = candidates[0]?.fallback ? '원본 사진으로 추가할까?' : candidates.length > 1 ? '어떤 걸 말랑하게 할까?' : '이거 말랑하게 할까?';
   $('#sheet-description').textContent = candidates[0]?.fallback
-    ? '자동 분리에 실패했어. 원본 사진을 말랑이로 추가할 수 있어.'
+    ? '대상을 자동으로 오리지 못했어. 원본 사진 그대로 말랑이로 추가하거나 닫고 다른 사진을 골라봐.'
     : '분리한 대상만 골라서 놀이터에 둘 수 있어.';
   list.replaceChildren();
   candidates.forEach((candidate, index) => list.append(makeCandidateRow(candidate, index)));
@@ -194,18 +198,71 @@ async function processNextFile() {
     processNextFile();
     return;
   }
+  if (!aiReady) {
+    pendingFiles.unshift(file);
+    openAiSheet();
+    return;
+  }
   setStatus('사진을 보고 있어…', true);
   try {
     const candidates = await findCutouts(file, (progress) => {
-      if (progress?.status === 'progress') setStatus('처음이면 AI를 준비하는 중…', true);
+      if (progress?.status === 'progress') setStatus(`AI 준비 중${progress.progress ? ` ${Math.round(progress.progress)}%` : '…'}`, true);
     });
-    if (!candidates.length) throw new Error('No foreground objects found');
+    if (!candidates.length) throw new Error('사진에서 분리할 대상을 찾지 못했어.');
     setStatus('대상 분리 완료');
     openCandidates(candidates, file.name);
   } catch (error) {
     console.error('Foreground extraction failed', error);
-    setStatus('자동 누끼를 못 땄어');
+    setStatus('자동 분리에 실패했어');
+    $('#sheet-eyebrow').textContent = '분리 실패';
     openCandidates([{ label: '원본 사진', blob: file, fallback: true }], file.name);
+    toast('대상이 안 보이면 다른 사진도 시도해봐.', 3600);
+  }
+}
+
+function openAiSheet() {
+  if (aiBusy) return;
+  $('#ai-description').textContent = '모델 파일을 내려받아 이 기기에서 처리해. AI 사용료는 없고, 다운로드는 데이터와 저장 공간을 사용해.';
+  $('#ai-progress').hidden = true;
+  $('#ai-download').disabled = false;
+  $('#ai-download').textContent = '와이파이에서 지금 준비';
+  aiSheet.hidden = false;
+  requestAnimationFrame(() => aiSheet.classList.add('open'));
+}
+
+function closeAiSheet() {
+  if (aiBusy) return;
+  aiSheet.classList.remove('open');
+  setTimeout(() => { aiSheet.hidden = true; }, 220);
+}
+
+async function downloadAiModel() {
+  if (aiBusy) return;
+  aiBusy = true;
+  $('#ai-progress').hidden = false;
+  $('#ai-progress-label').textContent = 'AI를 준비하는 중…';
+  $('#ai-download').disabled = true;
+  $('#ai-download').textContent = '준비 중…';
+  $('#ai-later').hidden = true;
+  try {
+    await prepareCutoutModel((progress) => {
+      if (progress?.status !== 'progress') return;
+      const pct = Number.isFinite(progress.progress) ? ` ${Math.round(progress.progress)}%` : '';
+      $('#ai-progress-label').textContent = `AI 준비 중${pct}`;
+    });
+    aiReady = true;
+    localStorage.setItem('malangee-ai-prepared', 'yes');
+    closeAiSheet();
+    setStatus('준비됐어. 사진을 골라봐.');
+    processNextFile();
+  } catch (error) {
+    console.error('AI model preparation failed', error);
+    $('#ai-progress-label').textContent = '준비하지 못했어. 연결을 확인하고 다시 해봐.';
+    $('#ai-download').disabled = false;
+    $('#ai-download').textContent = '다시 준비';
+    $('#ai-later').hidden = false;
+  } finally {
+    aiBusy = false;
   }
 }
 
@@ -258,7 +315,7 @@ async function sharePlayground() {
 }
 
 $('#add-button').addEventListener('click', () => openPicker());
-$('#empty-add').addEventListener('click', () => openPicker());
+emptyState.addEventListener('click', () => openPicker());
 input.addEventListener('change', () => {
   pendingFiles = [...input.files];
   input.removeAttribute('capture');
@@ -277,8 +334,14 @@ $('#delete-button').addEventListener('click', deleteSelected);
 $('#share-button').addEventListener('click', sharePlayground);
 $('#menu-button').addEventListener('click', () => toast('말랑이를 누르고, 잡아당기고, 두 손가락으로 늘려봐.', 3200));
 sheet.addEventListener('click', (event) => { if (event.target.closest('[data-close-sheet]')) closeSheet(); });
-window.addEventListener('keydown', (event) => { if (event.key === 'Escape' && !sheet.hidden) closeSheet(); });
+aiSheet.addEventListener('click', (event) => { if (event.target.closest('[data-close-ai]')) closeAiSheet(); });
+$('#ai-download').addEventListener('click', downloadAiModel);
+$('#ai-later').addEventListener('click', closeAiSheet);
+window.addEventListener('keydown', (event) => { if (event.key === 'Escape' && !sheet.hidden) closeSheet(); if (event.key === 'Escape' && !aiSheet.hidden) closeAiSheet(); });
 window.addEventListener('beforeunload', () => { saving.catch(() => {}); });
 
-restore();
+aiReady = localStorage.getItem('malangee-ai-prepared') === 'yes';
+restore().then(() => {
+  if (!aiReady) openAiSheet();
+});
 if ('serviceWorker' in navigator && import.meta.env.PROD) navigator.serviceWorker.register(`${import.meta.env.BASE_URL}sw.js`).catch(() => {});
