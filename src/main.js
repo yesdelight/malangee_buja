@@ -248,7 +248,7 @@ async function processNextFile() {
     setStatus('대상 분리 완료');
     openCandidates(candidates, file.name);
   } catch (error) {
-    console.error('Foreground extraction failed', error);
+    console.error('Foreground extraction failed', error, error?.cause);
     setStatus('');
     const unsupportedHeic = /\.(heic|heif)$/i.test(file.name) && readablePhoto === file && error.message === 'HEIC_CONVERSION_FAILED';
     if (unsupportedHeic) {
@@ -318,6 +318,9 @@ async function downloadAiModel(networkChoice) {
       const pct = Number.isFinite(progress.progress) ? ` ${Math.round(progress.progress)}%` : '';
       $('#ai-progress-label').textContent = `말랑이 도구 설치 중${pct}`;
     });
+    // Ask the browser to keep the model cache across launches when supported.
+    // This is best-effort and does not display a permission prompt.
+    try { await navigator.storage?.persist?.(); } catch { /* Browser may not support persistent storage. */ }
     aiReady = true;
     aiPreviouslyPrepared = true;
     localStorage.setItem('malangee-ai-prepared', 'yes');
