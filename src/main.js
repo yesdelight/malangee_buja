@@ -207,7 +207,7 @@ async function processNextFile() {
   }
   if (aiPreviouslyPrepared && !aiReady) {
     try {
-      setStatus('저장된 준비 파일을 확인 중…', true);
+      setStatus('설치된 도구를 확인 중…', true);
       await prepareCutoutModel(() => {}, true);
       aiReady = true;
     } catch {
@@ -224,7 +224,7 @@ async function processNextFile() {
     openAiSheet();
     return;
   }
-  setStatus('사진을 보고 있어…', true);
+  setStatus('사진을 살펴보는 중…', true);
   let readablePhoto = file;
   try {
     readablePhoto = await normalizePhoto(file);
@@ -253,15 +253,15 @@ function openAiSheet() {
   if (aiBusy) return;
   confirmedWifiDownload = false;
   localStorage.setItem('malangee-ai-onboarding-seen', 'yes');
-  $('#ai-title').textContent = '사진 속 대상을 찾아볼게.';
-  $('#ai-description').textContent = '사진은 서버로 보내지 않고 이 기기에서 처리해. 처음 한 번 준비 파일을 받아야 해. 모바일 데이터로 받으면 요금제에 따라 데이터 요금이 들 수 있어.';
+  $('#ai-title').textContent = '말랑이 도구를 설치할게.';
+  $('#ai-description').textContent = '사진 속 대상을 찾으려면 도구를 한 번 받아야 해. 사진은 이 기기에서 처리돼. 모바일 데이터 사용 시 요금이 들 수 있어.';
   $('#ai-progress').hidden = true;
   $('#ai-download-data').hidden = false;
   $('#ai-download-wifi').hidden = false;
   $('#ai-download-data').disabled = false;
-  $('#ai-download-data').textContent = '데이터로 지금 받기';
+  $('#ai-download-data').textContent = '데이터로 설치';
   $('#ai-download-wifi').disabled = false;
-  $('#ai-download-wifi').textContent = '와이파이로 받기';
+  $('#ai-download-wifi').textContent = '와이파이로 설치';
   $('#ai-later').hidden = false;
   aiSheet.hidden = false;
   requestAnimationFrame(() => aiSheet.classList.add('open'));
@@ -290,11 +290,13 @@ async function downloadAiModel(networkChoice) {
   }
   aiBusy = true;
   $('#ai-progress').hidden = false;
-  $('#ai-progress-label').textContent = '준비하는 중…';
+  $('#ai-title').textContent = '도구를 설치하는 중';
+  $('#ai-description').textContent = '처음 한 번만 받아. 완료되면 바로 사진을 살펴볼게.';
+  $('#ai-progress-label').textContent = '말랑이 도구 설치 중…';
   $('#ai-download-data').disabled = true;
   $('#ai-download-wifi').disabled = true;
-  $('#ai-download-data').textContent = '준비 중…';
-  $('#ai-download-wifi').textContent = '준비 중…';
+  $('#ai-download-data').textContent = '설치 중…';
+  $('#ai-download-wifi').textContent = '설치 중…';
   $('#ai-download-data').hidden = networkChoice !== 'cellular';
   $('#ai-download-wifi').hidden = networkChoice !== 'wifi';
   $('#ai-later').hidden = true;
@@ -302,18 +304,24 @@ async function downloadAiModel(networkChoice) {
     await prepareCutoutModel((progress) => {
       if (progress?.status !== 'progress') return;
       const pct = Number.isFinite(progress.progress) ? ` ${Math.round(progress.progress)}%` : '';
-      $('#ai-progress-label').textContent = `준비 중${pct}`;
+      $('#ai-progress-label').textContent = `말랑이 도구 설치 중${pct}`;
     });
     aiReady = true;
     aiPreviouslyPrepared = true;
     localStorage.setItem('malangee-ai-prepared', 'yes');
+    $('#ai-title').textContent = '설치 완료';
+    $('#ai-description').textContent = '이제 사진을 살펴볼게.';
+    $('#ai-progress-label').textContent = '설치 완료';
     aiBusy = false;
-    closeAiSheet();
-    setStatus('준비됐어. 사진을 골라봐.');
+    aiSheet.classList.remove('open');
+    await new Promise((resolve) => setTimeout(resolve, 220));
+    aiSheet.hidden = true;
     processNextFile();
   } catch (error) {
     console.error('AI model preparation failed', error);
-    $('#ai-progress-label').textContent = '준비하지 못했어. 연결을 확인하고 다시 해봐.';
+    $('#ai-title').textContent = '설치하지 못했어';
+    $('#ai-description').textContent = '연결을 확인하고 다시 눌러줘.';
+    $('#ai-progress-label').textContent = '도구를 설치하지 못했어.';
     $('#ai-download-data').hidden = false;
     $('#ai-download-wifi').hidden = false;
     $('#ai-download-data').disabled = false;
