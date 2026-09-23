@@ -24,6 +24,9 @@ let statusTimer;
 let saving = Promise.resolve();
 let aiBusy = false;
 let aiReady = false;
+let aiPreviouslyPrepared = localStorage.getItem('malangee-ai-prepared') === 'yes';
+let confirmedWifiDownload = false;
+const aiOnboardingSeen = localStorage.getItem('malangee-ai-onboarding-seen') === 'yes';
 
 const appScene = new SquishyScene(canvas, {
   onSelect: updateSelection,
@@ -203,6 +206,20 @@ async function processNextFile() {
     openAiSheet();
     return;
   }
+  if (aiPreviouslyPrepared && !aiReady) {
+    try {
+      setStatus('저장된 AI를 확인 중…', true);
+      await prepareCutoutModel(() => {}, true);
+      aiReady = true;
+    } catch {
+      aiPreviouslyPrepared = false;
+      localStorage.removeItem('malangee-ai-prepared');
+      pendingFiles.unshift(file);
+      setStatus('');
+      openAiSheet();
+      return;
+    }
+  }
   setStatus('사진을 보고 있어…', true);
   try {
     const candidates = await findCutouts(file, (progress) => {
@@ -222,10 +239,18 @@ async function processNextFile() {
 
 function openAiSheet() {
   if (aiBusy) return;
-  $('#ai-description').textContent = '모델 파일을 내려받아 이 기기에서 처리해. AI 사용료는 없고, 다운로드는 데이터와 저장 공간을 사용해.';
+  confirmedWifiDownload = false;
+  localStorage.setItem('malangee-ai-onboarding-seen', 'yes');
+  $('#ai-title').textContent = '어떤 네트워크로 받을까?';
+  $('#ai-description').textContent = '사진 분리 모델을 이 기기에 받아. AI 사용료는 없고, 파일 다운로드는 데이터와 저장 공간을 사용해.';
   $('#ai-progress').hidden = true;
-  $('#ai-download').disabled = false;
-  $('#ai-download').textContent = '와이파이에서 지금 준비';
+  $('#ai-download-data').hidden = false;
+  $('#ai-download-wifi').hidden = false;
+  $('#ai-download-data').disabled = false;
+  $('#ai-download-data').textContent = '모바일 데이터로 받기';
+  $('#ai-download-wifi').disabled = false;
+  $('#ai-download-wifi').textContent = '와이파이로 받기';
+  $('#ai-later').hidden = false;
   aiSheet.hidden = false;
   requestAnimationFrame(() => aiSheet.classList.add('open'));
 }
@@ -236,13 +261,30 @@ function closeAiSheet() {
   setTimeout(() => { aiSheet.hidden = true; }, 220);
 }
 
-async function downloadAiModel() {
+async function downloadAiModel(networkChoice) {
   if (aiBusy) return;
+  const connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+  const effectiveType = connection?.type === 'cellular' || ['slow-2g', '2g', '3g', '4g'].includes(connection?.effectiveType) && connection?.type !== 'wifi';
+  if (networkChoice === 'wifi' && effectiveType) {
+    $('#ai-description').textContent = '현재 모바일 네트워크로 보여. 와이파이에 연결한 다음 다시 눌러줘.';
+    return;
+  }
+  if (networkChoice === 'wifi' && !confirmedWifiDownload && (!connection || connection.type !== 'wifi')) {
+    $('#ai-title').textContent = '와이파이에 연결했어?';
+    $('#ai-description').textContent = '아이폰 Safari는 네트워크 종류를 앱에 알려주지 않아. 와이파이에 연결한 뒤 한 번 더 눌러줘.';
+    $('#ai-download-wifi').textContent = '연결했어 · 와이파이로 받기';
+    confirmedWifiDownload = true;
+    return;
+  }
   aiBusy = true;
   $('#ai-progress').hidden = false;
   $('#ai-progress-label').textContent = 'AI를 준비하는 중…';
-  $('#ai-download').disabled = true;
-  $('#ai-download').textContent = '준비 중…';
+  $('#ai-download-data').disabled = true;
+  $('#ai-download-wifi').disabled = true;
+  $('#ai-download-data').textContent = '준비 중…';
+  $('#ai-download-wifi').textContent = '준비 중…';
+  $('#ai-download-data').hidden = networkChoice !== 'cellular';
+  $('#ai-download-wifi').hidden = networkChoice !== 'wifi';
   $('#ai-later').hidden = true;
   try {
     await prepareCutoutModel((progress) => {
@@ -251,15 +293,21 @@ async function downloadAiModel() {
       $('#ai-progress-label').textContent = `AI 준비 중${pct}`;
     });
     aiReady = true;
+    aiPreviouslyPrepared = true;
     localStorage.setItem('malangee-ai-prepared', 'yes');
+    aiBusy = false;
     closeAiSheet();
     setStatus('준비됐어. 사진을 골라봐.');
     processNextFile();
   } catch (error) {
     console.error('AI model preparation failed', error);
     $('#ai-progress-label').textContent = '준비하지 못했어. 연결을 확인하고 다시 해봐.';
-    $('#ai-download').disabled = false;
-    $('#ai-download').textContent = '다시 준비';
+    $('#ai-download-data').hidden = false;
+    $('#ai-download-wifi').hidden = false;
+    $('#ai-download-data').disabled = false;
+    $('#ai-download-data').textContent = '모바일 데이터로 다시 받기';
+    $('#ai-download-wifi').disabled = false;
+    $('#ai-download-wifi').textContent = '와이파이로 다시 받기';
     $('#ai-later').hidden = false;
   } finally {
     aiBusy = false;
@@ -335,13 +383,13 @@ $('#share-button').addEventListener('click', sharePlayground);
 $('#menu-button').addEventListener('click', () => toast('말랑이를 누르고, 잡아당기고, 두 손가락으로 늘려봐.', 3200));
 sheet.addEventListener('click', (event) => { if (event.target.closest('[data-close-sheet]')) closeSheet(); });
 aiSheet.addEventListener('click', (event) => { if (event.target.closest('[data-close-ai]')) closeAiSheet(); });
-$('#ai-download').addEventListener('click', downloadAiModel);
+$('#ai-download-data').addEventListener('click', () => downloadAiModel('cellular'));
+$('#ai-download-wifi').addEventListener('click', () => downloadAiModel('wifi'));
 $('#ai-later').addEventListener('click', closeAiSheet);
 window.addEventListener('keydown', (event) => { if (event.key === 'Escape' && !sheet.hidden) closeSheet(); if (event.key === 'Escape' && !aiSheet.hidden) closeAiSheet(); });
 window.addEventListener('beforeunload', () => { saving.catch(() => {}); });
 
-aiReady = localStorage.getItem('malangee-ai-prepared') === 'yes';
 restore().then(() => {
-  if (!aiReady) openAiSheet();
+  if (!aiPreviouslyPrepared && !aiOnboardingSeen) openAiSheet();
 });
 if ('serviceWorker' in navigator && import.meta.env.PROD) navigator.serviceWorker.register(`${import.meta.env.BASE_URL}sw.js`).catch(() => {});

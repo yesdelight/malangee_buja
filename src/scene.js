@@ -83,7 +83,7 @@ export class SquishyScene {
       const px = position.getX(index) / (width / 2);
       const py = position.getY(index) / (height / 2);
       const dome = Math.max(0, 1 - px * px - py * py);
-      position.setZ(index, Math.pow(dome, 1.1) * 0.27);
+      position.setZ(index, Math.pow(dome, 1.1) * 0.4);
     }
     basePositions.set(position.array);
     geometry.computeVertexNormals();
@@ -91,22 +91,42 @@ export class SquishyScene {
       map: texture,
       transparent: true,
       alphaTest: 0.035,
-      roughness: 0.48,
+      roughness: 0.34,
       metalness: 0,
-      clearcoat: 0.5,
-      clearcoatRoughness: 0.3,
+      clearcoat: 0.72,
+      clearcoatRoughness: 0.2,
       side: THREE.DoubleSide,
     });
     const mesh = new THREE.Mesh(geometry, material);
     mesh.userData.toyId = id;
+    // A tinted silhouette tucked behind the cutout gives its flat photo a visible squishy edge.
+    const rimPixels = new Uint8Array(128 * 128 * 4);
+    for (let pixel = 0; pixel < 128 * 128; pixel++) {
+      const alpha = alphaPixels[pixel * 4 + 3];
+      rimPixels[pixel * 4] = alpha;
+      rimPixels[pixel * 4 + 1] = alpha;
+      rimPixels[pixel * 4 + 2] = alpha;
+      rimPixels[pixel * 4 + 3] = 255;
+    }
+    const rimTexture = new THREE.DataTexture(rimPixels, 128, 128, THREE.RGBAFormat);
+    rimTexture.magFilter = THREE.LinearFilter;
+    rimTexture.minFilter = THREE.LinearFilter;
+    rimTexture.needsUpdate = true;
+    const rim = new THREE.Mesh(
+      new THREE.PlaneGeometry(width, height),
+      new THREE.MeshBasicMaterial({ color: '#8f8172', alphaMap: rimTexture, alphaTest: 0.04, transparent: true, depthWrite: false, side: THREE.DoubleSide }),
+    );
+    rim.scale.set(1.035, 1.035, 1);
+    rim.position.set(0.018, -0.028, -0.055);
     const group = new THREE.Group();
     group.position.set(x, y, 0);
+    group.add(rim);
     group.add(mesh);
     const shadow = this.makeShadow(width, height);
     group.add(shadow);
     this.scene.add(group);
     const item = {
-      id, name, blob, group, mesh, geometry, texture, basePositions, alphaPixels,
+      id, name, blob, group, mesh, geometry, texture, basePositions, alphaPixels, rim, rimTexture,
       width, height, velocity: new THREE.Vector2(), press: 0, pressTarget: 0,
       contact: new THREE.Vector2(), hasContact: false, preset: preset || 'soft',
       scaleX: 1, scaleY: 1, targetScaleX: 1, targetScaleY: 1, spin: 0,
@@ -324,12 +344,12 @@ export class SquishyScene {
   remove(item = this.selected) {
     if (!item) return;
     this.scene.remove(item.group);
-    item.geometry.dispose();
-    item.mesh.material.map?.dispose();
-    item.mesh.material.dispose();
-    item.group.children.find((child) => child !== item.mesh)?.material.map?.dispose();
-    item.group.children.find((child) => child !== item.mesh)?.geometry.dispose();
-    item.group.children.find((child) => child !== item.mesh)?.material.dispose();
+    for (const child of item.group.children) {
+      child.geometry?.dispose();
+      child.material?.map?.dispose();
+      child.material?.alphaMap?.dispose();
+      child.material?.dispose();
+    }
     this.items = this.items.filter((candidate) => candidate !== item);
     if (this.selected === item) this.select(null);
   }
@@ -397,6 +417,8 @@ export class SquishyScene {
     const attribute = item.geometry.getAttribute('position');
     const positions = attribute.array;
     const pressure = Math.max(item.press, item.pressTarget * 0.92);
+    const bodySquash = Math.max(item.press, item.pressTarget);
+    item.mesh.scale.set(1 + bodySquash * 0.065, 1 - bodySquash * 0.12, 1);
     const radius = Math.max(item.width, item.height) * (item.preset === 'stretchy' ? 0.24 : 0.2);
     let changed = false;
     for (let index = 0; index < attribute.count; index++) {
@@ -407,10 +429,14 @@ export class SquishyScene {
       const dy = y - item.contact.y;
       const weight = item.hasContact ? Math.exp(-(dx * dx + dy * dy) / (radius * radius)) : 0;
       const pressedZ = item.basePositions[base + 2] - weight * pressure * preset.squash;
+      const nextX = x + dx * weight * pressure * 0.045;
+      const nextY = y + dy * weight * pressure * 0.045;
       const bounce = item.press ? item.press * 0.035 * Math.sin((index + 1) * 2.1) : 0;
       const targetZ = pressedZ + bounce;
       const nextZ = THREE.MathUtils.damp(positions[base + 2], targetZ, item.pressTarget ? 18 : 12, dt);
-      if (Math.abs(positions[base + 2] - nextZ) > 0.0003) changed = true;
+      if (Math.abs(positions[base] - nextX) > 0.0003 || Math.abs(positions[base + 1] - nextY) > 0.0003 || Math.abs(positions[base + 2] - nextZ) > 0.0003) changed = true;
+      positions[base] = nextX;
+      positions[base + 1] = nextY;
       positions[base + 2] = nextZ;
     }
     if (changed) {

@@ -13,17 +13,17 @@ function loadTransformers() {
   return transformersPromise;
 }
 
-async function getSegmenter(onProgress) {
+async function getSegmenter(onProgress, localFilesOnly = false) {
   segmenterPromise ??= (async () => {
     const { pipeline } = await loadTransformers();
     if (navigator.gpu) {
       try {
-        return await pipeline('image-segmentation', MODEL, { device: 'webgpu', dtype: 'q8', progress_callback: onProgress });
+        return await pipeline('image-segmentation', MODEL, { device: 'webgpu', dtype: 'q8', local_files_only: localFilesOnly, progress_callback: onProgress });
       } catch (error) {
         console.info('WebGPU is unavailable for segmentation; using WASM.', error);
       }
     }
-    return pipeline('image-segmentation', MODEL, { device: 'wasm', dtype: 'q8', progress_callback: onProgress });
+    return pipeline('image-segmentation', MODEL, { device: 'wasm', dtype: 'q8', local_files_only: localFilesOnly, progress_callback: onProgress });
   })().catch((error) => {
     segmenterPromise = undefined;
     throw error;
@@ -34,8 +34,8 @@ async function getSegmenter(onProgress) {
 async function maskedBlob(image, mask) {
   const resizedMask = await mask.resize(image.width, image.height);
   const rgba = image.clone().rgba();
-  // Keep a feathered edge from the model's confidence mask instead of hard thresholding.
-  rgba.putAlpha(resizedMask);
+  const alpha = resizedMask.channels === 1 ? resizedMask.data : resizedMask.data.filter((_, index) => index % resizedMask.channels === 0);
+  for (let pixel = 0; pixel < rgba.width * rgba.height; pixel++) rgba.data[pixel * 4 + 3] = alpha[pixel];
   return new Promise((resolve, reject) => {
     const canvas = document.createElement('canvas');
     canvas.width = rgba.width;
@@ -63,6 +63,28 @@ async function readPhoto(file, RawImage) {
   return RawImage.fromCanvas(canvas);
 }
 
+function rankSegments(output, includeBackground = false) {
+  const ranked = [];
+  for (const segment of output || []) {
+    const label = String(segment.label || '대상').toLowerCase();
+    const isBackground = BACKGROUND_LABELS.has(label);
+    if (isBackground && !includeBackground) continue;
+    const mask = segment.mask;
+    if (!mask?.data || !mask.width || !mask.height) continue;
+    let visiblePixels = 0;
+    const channels = Math.max(1, mask.channels || 1);
+    for (let index = 0; index < mask.data.length; index += channels) {
+      if (mask.data[index] > 16) visiblePixels++;
+    }
+    const coverage = visiblePixels / (mask.width * mask.height);
+    // Keep small and unusual subjects. Only near-full-frame masks are likely to be backdrop.
+    if (coverage < 0.002 || coverage > 0.985) continue;
+    ranked.push({ label: segment.label || '대상', score: segment.score ?? 0, coverage, mask, isBackground });
+  }
+  ranked.sort((a, b) => Number(a.isBackground) - Number(b.isBackground) || b.coverage - a.coverage);
+  return ranked;
+}
+
 export async function findCutouts(file, onProgress = () => {}) {
   const { RawImage } = await loadTransformers();
   const original = await readPhoto(file, RawImage);
@@ -71,42 +93,22 @@ export async function findCutouts(file, onProgress = () => {}) {
     ? await original.resize(Math.round(original.width * 960 / longestSide), Math.round(original.height * 960 / longestSide))
     : original;
   const model = await getSegmenter(onProgress);
-  const output = await model(image, { threshold: 0.45, mask_threshold: 0.42 });
-  const ranked = [];
-
-  for (const segment of output) {
-    const label = String(segment.label || '대상').toLowerCase();
-    if (BACKGROUND_LABELS.has(label)) continue;
-    if (typeof segment.score === 'number' && segment.score < 0.3) continue;
-    const mask = segment.mask;
-    let visiblePixels = 0;
-    for (let index = 0; index < mask.data.length; index += mask.channels) {
-      if (mask.data[index] > 24) visiblePixels++;
-    }
-    const coverage = visiblePixels / (mask.width * mask.height);
-    if (coverage < 0.008 || coverage > 0.88) continue;
-    ranked.push({
-      label: segment.label || '대상',
-      score: segment.score ?? 0,
-      coverage,
-      mask,
-    });
-  }
-
-  ranked.sort((a, b) => b.coverage - a.coverage);
+  let ranked = rankSegments(await model(image, { threshold: 0.32, mask_threshold: 0.32, overlap_mask_area_threshold: 0.9 }));
+  // A permissive second pass catches small or lower-confidence objects that the first pass misses.
+  if (!ranked.length) ranked = rankSegments(await model(image, { threshold: 0.18, mask_threshold: 0.2, overlap_mask_area_threshold: 0.95 }));
+  // Some photos contain only a dominant panoptic segment; offer it instead of silently returning no result.
+  if (!ranked.length) ranked = rankSegments(await model(image, { threshold: 0.12, mask_threshold: 0.16, overlap_mask_area_threshold: 1 }), true);
   const candidates = [];
-  for (const segment of ranked.slice(0, 6)) {
-    candidates.push({
-      label: segment.label,
-      score: segment.score,
-      coverage: segment.coverage,
-      blob: await maskedBlob(original, segment.mask),
-    });
+  for (const segment of ranked.slice(0, 8)) {
+    try {
+      candidates.push({ label: segment.label, score: segment.score, coverage: segment.coverage, blob: await maskedBlob(original, segment.mask) });
+    } catch (error) {
+      console.warn(`Could not create cutout for ${segment.label}`, error);
+    }
   }
-  // Keep a short, useful choice set and let users choose the main object.
-  return candidates.slice(0, 8);
+  return candidates;
 }
 
-export async function prepareCutoutModel(onProgress = () => {}) {
-  await getSegmenter(onProgress);
+export async function prepareCutoutModel(onProgress = () => {}, localFilesOnly = false) {
+  await getSegmenter(onProgress, localFilesOnly);
 }
