@@ -1,38 +1,50 @@
 <!doctype html>
 <html lang="ko">
-<head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#fff"><title>말랑이 부자</title>
-<style>
-@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap');
-:root{--ink:#20201f;--sub:#a09f9c;--line:#efefed;--accent:#d6f36b}*{box-sizing:border-box}body{margin:0;color:var(--ink);background:#fff;font-family:'DM Sans',-apple-system,BlinkMacSystemFont,sans-serif}button{font:inherit;color:inherit;border:0;cursor:pointer}.app{height:100dvh;min-height:560px;display:flex;flex-direction:column;max-width:1180px;margin:auto;padding:0 36px}header{height:74px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--line);flex:none}.brand{font-weight:700;font-size:17px;letter-spacing:-.8px}.count{font-size:12px;color:#999}.canvas{position:relative;flex:1;overflow:hidden;touch-action:none;background:#fff}.empty{position:absolute;inset:0;display:grid;place-content:center;text-align:center;pointer-events:none;transition:opacity .2s}.empty strong{font-size:18px;font-weight:600;letter-spacing:-.6px}.empty span{font-size:12px;color:#aaa;margin-top:9px}.items{position:absolute;inset:0;pointer-events:none}.item{position:absolute;width:clamp(116px,20vw,220px);height:clamp(116px,20vw,220px);display:grid;place-items:center;pointer-events:auto;touch-action:none;cursor:grab;user-select:none;transform:translate(-50%,-50%);filter:drop-shadow(0 17px 13px #0000001c)}.item:active{cursor:grabbing}.item img{width:100%;height:100%;object-fit:contain;pointer-events:none;filter:drop-shadow(inset 0 -5px 5px #0002)}.item .sample{font-size:clamp(88px,15vw,170px);line-height:1;filter:drop-shadow(0 8px 4px #00000012);pointer-events:none}.item.selected{filter:drop-shadow(0 20px 16px #00000026)}.bottom{height:80px;flex:none;border-top:1px solid var(--line);display:flex;justify-content:space-between;align-items:center}.tools{display:flex;gap:8px}.tool{background:#f5f5f3;border-radius:22px;padding:11px 15px;font-size:12px;display:flex;align-items:center;gap:7px}.tool:hover{background:#ecece8}.tool.primary{background:var(--ink);color:#fff;padding:11px 18px}.tool.primary:hover{background:#393936}.tool:disabled{opacity:.5}.plus{font-size:18px;font-weight:400;line-height:12px}.dock{position:absolute;left:50%;bottom:96px;transform:translateX(-50%);display:flex;align-items:center;gap:4px;padding:5px;border:1px solid #eee;border-radius:24px;background:#fffffff2;box-shadow:0 5px 22px #0000000a;opacity:0;pointer-events:none;transition:.18s}.dock.visible{opacity:1;pointer-events:auto}.dock button{background:none;width:37px;height:34px;border-radius:20px;color:#656560;font-size:15px}.dock button:hover{background:#f3f3f0}.dock .material{font-size:11px;width:auto;padding:0 11px}.toast{position:fixed;bottom:99px;left:50%;transform:translate(-50%,8px);background:#222;color:#fff;border-radius:20px;padding:10px 15px;font-size:12px;opacity:0;transition:.2s;pointer-events:none;z-index:10}.toast.show{opacity:1;transform:translate(-50%,0)}input{display:none}
-@media(max-width:620px){.app{padding:0 18px;min-height:500px}header{height:60px}.bottom{height:72px}.tool{padding:10px 12px;font-size:12px}.tool.primary{padding:10px 15px}.item{width:clamp(104px,32vw,170px);height:clamp(104px,32vw,170px)}.item .sample{font-size:clamp(83px,26vw,138px)}.dock{bottom:83px}}
-</style></head>
-<body><div class="app">
-<header><div class="brand">말랑이 부자</div><div class="count" id="count">0</div></header>
-<main class="canvas" id="canvas" aria-label="말랑이 놀이터"><div class="empty" id="empty"><strong>뭐든 말랑하게.</strong><span>＋ 눌러서 사진을 넣어봐</span></div><div class="items" id="items"></div><div class="dock" id="dock"><button id="squish" aria-label="누르기">●</button><button id="stretch" aria-label="늘리기">↔</button><button id="bounce" aria-label="튕기기">↗</button><button class="material" id="material">말랑 ▾</button><button id="sound" aria-label="소리 켜기">♫</button></div></main>
-<footer class="bottom"><button class="tool" id="share">↗ <span>공유</span></button><div class="tools"><button class="tool" id="camera">⌕ <span>촬영</span></button><button class="tool primary" id="add"><span class="plus">＋</span> 사진 넣기</button></div></footer>
-<input id="file" type="file" accept="image/*" multiple><div class="toast" id="toast"></div></div>
-<script type="module">
-const canvas=document.querySelector('#canvas'),items=document.querySelector('#items'),empty=document.querySelector('#empty'),dock=document.querySelector('#dock'),fileInput=document.querySelector('#file');
-let objects=[],selected=null, soundOn=true, soundCtx;
-function toast(text){const el=document.querySelector('#toast');el.textContent=text;el.classList.add('show');setTimeout(()=>el.classList.remove('show'),1800)}
-function audio(intensity=.5,kind='press'){if(!soundOn)return;try{soundCtx??=new AudioContext();const osc=soundCtx.createOscillator(),gain=soundCtx.createGain();osc.type=kind==='stretch'?'sine':'triangle';osc.frequency.setValueAtTime(kind==='stretch'?260:410,soundCtx.currentTime);osc.frequency.exponentialRampToValueAtTime(kind==='release'?180:kind==='stretch'?170:270,soundCtx.currentTime+.12);gain.gain.setValueAtTime(.0001,soundCtx.currentTime);gain.gain.exponentialRampToValueAtTime(.11*intensity,soundCtx.currentTime+.012);gain.gain.exponentialRampToValueAtTime(.0001,soundCtx.currentTime+.17);osc.connect(gain);gain.connect(soundCtx.destination);osc.start();osc.stop(soundCtx.currentTime+.18)}catch{}}
-function haptic(intensity=.5){if(navigator.vibrate)navigator.vibrate(Math.round(8+intensity*30))}
-function count(){document.querySelector('#count').textContent=objects.length;empty.style.opacity=objects.length?'0':'1'}
-function setSelected(o){selected=o;document.querySelectorAll('.item').forEach(el=>el.classList.toggle('selected',el===o?.el));dock.classList.toggle('visible',!!o)}
-function addObject(src,type='image'){const o={src,type,x:35+Math.random()*30,y:33+Math.random()*34,sx:1,sy:1,el:null};const el=document.createElement('div');el.className='item';el.style.left=o.x+'%';el.style.top=o.y+'%';el.innerHTML=type==='sample'?`<span class="sample">${src}</span>`:`<img alt="말랑이" src="${src}">`;o.el=el;items.append(el);objects.push(o);count();setSelected(o);el.addEventListener('pointerdown',down);return o}
-let pointer=null;function down(e){const el=e.currentTarget,o=objects.find(v=>v.el===el);e.stopPropagation();setSelected(o);pointer={o,id:e.pointerId,x:e.clientX,y:e.clientY,ox:o.x,oy:o.y,moved:false};el.setPointerCapture(e.pointerId);el.addEventListener('pointermove',move);el.addEventListener('pointerup',up,{once:true});press(o)}
-function move(e){if(!pointer)return;const r=canvas.getBoundingClientRect(),dx=e.clientX-pointer.x,dy=e.clientY-pointer.y;if(Math.hypot(dx,dy)>7)pointer.moved=true;const o=pointer.o;o.x=Math.max(6,Math.min(94,pointer.ox+dx/r.width*100));o.y=Math.max(7,Math.min(93,pointer.oy+dy/r.height*100));o.el.style.left=o.x+'%';o.el.style.top=o.y+'%';if(pointer.moved){const amount=Math.min(.4,Math.abs(dx)/r.width);o.el.style.transform=`translate(-50%,-50%) scale(${1-amount*.45},${1+amount}) rotate(${Math.max(-12,Math.min(12,dx/18))}deg)`}}
-function up(e){if(!pointer)return;const o=pointer.o;const dragged=pointer.moved;pointer=null;o.el.style.transition='transform .38s cubic-bezier(.15,.7,.25,1.35)';o.el.style.transform='translate(-50%,-50%) scale(1.08,.93)';setTimeout(()=>{o.el.style.transform='translate(-50%,-50%) scale(1,1)';setTimeout(()=>o.el.style.transition='',380)},95);audio(dragged?.9:.6,dragged?'stretch':'release');haptic(dragged?.8:.6);o.el.removeEventListener('pointermove',move)}
-function press(o){o.el.animate([{transform:'translate(-50%,-50%) scale(1,1)'},{transform:'translate(-50%,-50%) scale(.91,1.08)'},{transform:'translate(-50%,-50%) scale(1,1)'}],{duration:430,easing:'cubic-bezier(.2,.7,.3,1.3)'});audio(.7);haptic(.45)}
-canvas.addEventListener('pointerdown',e=>{if(e.target===canvas||e.target===items){setSelected(null)}});
-document.querySelector('#add').onclick=()=>fileInput.click();document.querySelector('#camera').onclick=()=>{fileInput.setAttribute('capture','environment');fileInput.click();setTimeout(()=>fileInput.removeAttribute('capture'),1000)};
-fileInput.addEventListener('change',async()=>{const files=[...fileInput.files||[]];fileInput.value='';for(const f of files){toast('사진에서 말랑이를 오리는 중');try{const {removeBackground}=await import('https://esm.sh/@imgly/background-removal@1.5.8');const cutout=await removeBackground(f,{model:'small',output:{format:'image/png'}});const url=URL.createObjectURL(cutout);addObject(url)}catch(err){const url=URL.createObjectURL(f);addObject(url);toast('누끼 처리에 실패해 원본으로 넣었어')}}});
-document.querySelector('#squish').onclick=()=>selected&&press(selected);
-document.querySelector('#stretch').onclick=()=>{if(!selected)return;const o=selected;o.el.animate([{transform:'translate(-50%,-50%) scale(1,1)'},{transform:'translate(-50%,-50%) scale(1.38,.76)'},{transform:'translate(-50%,-50%) scale(1,1)'}],{duration:800,easing:'cubic-bezier(.2,.8,.3,1.2)'});audio(.75,'stretch');haptic(.7)};
-document.querySelector('#bounce').onclick=()=>{if(!selected)return;selected.el.animate([{transform:'translate(-50%,-50%) translateY(0) scale(1,1)'},{transform:'translate(-50%,-50%) translateY(-70px) scale(.9,1.12)'},{transform:'translate(-50%,-50%) translateY(0) scale(1.13,.85)'},{transform:'translate(-50%,-50%) scale(1,1)'}],{duration:650,easing:'ease-out'});audio(.9,'release');haptic(.85)};
-document.querySelector('#material').onclick=()=>{if(!selected)return;const choices=['말랑','쫀득','탱탱','폭신'];const el=document.querySelector('#material'),i=choices.indexOf(el.textContent.split(' ')[0]);el.textContent=choices[(i+1)%choices.length]+' ▾';selected.el.animate([{transform:'translate(-50%,-50%) scale(.9,1.1)'},{transform:'translate(-50%,-50%) scale(1,1)'}],{duration:330})};
-document.querySelector('#sound').onclick=e=>{soundOn=!soundOn;e.currentTarget.style.opacity=soundOn?'1':'.35';toast(soundOn?'소리 켰어':'소리 껐어')};
-document.querySelector('#share').onclick=async()=>{try{if(navigator.share)await navigator.share({title:'말랑이 부자',text:'내 말랑이야. 눌러봐!'});else toast('공유는 앱에서 지원할게')}catch{}};
-addObject('🍑','sample');
-</script></body></html>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#ffffff" />
+    <meta name="description" content="사진 속 뭐든 말랑하게. 내 사진으로 만드는 디지털 말랑이." />
+    <link rel="manifest" href="%BASE_URL%manifest.webmanifest" />
+    <link rel="icon" href="%BASE_URL%icon.svg" type="image/svg+xml" />
+    <title>말랑이 부자</title>
+  </head>
+  <body>
+    <div id="app">
+      <header class="topbar">
+        <a class="wordmark" href="/" aria-label="말랑이 부자 홈">말랑이 부자</a>
+        <div class="top-actions"><span id="save-state" class="save-state">저장됨</span><button class="icon-btn" id="menu-button" aria-label="메뉴">···</button></div>
+      </header>
+      <main class="playground" id="playground">
+        <canvas id="scene" aria-label="말랑이 놀이터. 오브젝트를 눌러보고 끌어보세요."></canvas>
+        <button class="empty-state" id="empty-state" type="button" aria-label="사진을 선택해 말랑이 만들기"><span class="empty-mark">＋</span><strong>사진 넣고, 눌러봐.</strong></button>
+        <div class="status-pill" id="status-pill" role="status" aria-live="polite"></div>
+        <div class="object-dock" id="object-dock" aria-label="선택한 말랑이 조작">
+          <button class="dock-button" id="stretch-button" aria-label="늘리기"><span>↔</span><small>늘리기</small></button>
+          <button class="dock-button" id="bounce-button" aria-label="튕기기"><span>↗</span><small>튕기기</small></button>
+          <button class="dock-button" id="material-button" aria-label="물성 변경"><span>◉</span><small id="material-label">말랑</small></button>
+          <button class="dock-button" id="sound-button" aria-label="소리 켜기"><span>♫</span><small id="sound-label">소리 켬</small></button>
+          <button class="dock-button danger" id="delete-button" aria-label="말랑이 삭제"><span>×</span><small>삭제</small></button>
+        </div>
+      </main>
+      <footer class="bottom-bar">
+        <div class="object-count"><span class="count-dot"></span><span id="count-label">말랑이 0개</span></div>
+        <div class="bottom-actions">
+          <button class="secondary-button" id="share-button" aria-label="놀이터 공유"><span>↗</span><span>공유</span></button>
+          <button class="primary-button" id="add-button"><span class="plus">＋</span><span>사진 넣기</span></button>
+        </div>
+      </footer>
+      <input id="photo-input" type="file" accept="image/*" multiple hidden />
+      <section class="sheet" id="selection-sheet" aria-modal="true" role="dialog" aria-labelledby="sheet-title" hidden>
+        <div class="sheet-scrim" data-close-sheet></div>
+        <div class="sheet-panel"><div class="sheet-handle"></div><button class="sheet-close" data-close-sheet aria-label="닫기">×</button><p class="eyebrow" id="sheet-eyebrow">대상 선택</p><h1 id="sheet-title">어떤 걸 말랑하게 할까?</h1><p class="sheet-description" id="sheet-description">사진 속 대상은 이 기기에서 분리돼.</p><div class="candidate-list" id="candidate-list"></div></div>
+      </section>
+      <section class="sheet" id="ai-sheet" aria-modal="true" role="dialog" aria-labelledby="ai-title" hidden>
+        <div class="sheet-scrim" data-close-ai></div>
+        <div class="sheet-panel ai-panel"><div class="sheet-handle"></div><button class="sheet-close" data-close-ai aria-label="닫기">×</button><p class="eyebrow">처음 한 번만</p><h1 id="ai-title">말랑이 도구를 설치할게.</h1><p class="sheet-description" id="ai-description">사진 속 대상을 찾으려면 도구를 한 번 받아야 해. 사진은 이 기기에서 처리돼. 모바일 데이터 사용 시 요금이 들 수 있어.</p><div class="ai-progress" id="ai-progress" hidden><span class="ai-spinner"></span><span id="ai-progress-label">도구 설치 중…</span></div><div class="ai-actions"><button class="primary-button" id="ai-download-data">데이터로 설치</button><button class="secondary-button ai-wifi-button" id="ai-download-wifi">와이파이로 설치</button><button class="text-action" id="ai-later">나중에</button></div></div>
+      </section>
+      <div class="toast" id="toast" role="status" aria-live="polite"></div>
+    </div>
+    <script type="module" src="./src/main.js"></script>
+  </body>
+</html>
